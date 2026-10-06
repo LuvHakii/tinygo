@@ -165,10 +165,17 @@ func MakeGCStackSlots(mod llvm.Module) bool {
 			call.EraseFromParentAsInstruction()
 
 			// Some trivial optimizations.
-			if ptr.IsAInstruction().IsNil() {
+			isArgument := !ptr.IsAArgument().IsNil()
+			if ptr.IsAInstruction().IsNil() && !isArgument {
 				continue
 			}
 			if _, ok := rooted[ptr]; ok {
+				continue
+			}
+			if isArgument {
+				// A parameter is live from function entry and needs a slot.
+				rooted[ptr] = struct{}{}
+				pointers = append(pointers, ptr)
 				continue
 			}
 			switch ptr.InstructionOpcode() {
@@ -287,7 +294,8 @@ func MakeGCStackSlots(mod llvm.Module) bool {
 		stackObjectType := ctx.StructType(fields, false)
 
 		// Create the stack object at the function entry.
-		builder.SetInsertPointBefore(fn.EntryBasicBlock().FirstInstruction())
+		entryFirst := fn.EntryBasicBlock().FirstInstruction()
+		builder.SetInsertPointBefore(entryFirst)
 		stackObject := builder.CreateAlloca(stackObjectType, "gc.stackobject")
 		initialStackObject := llvm.ConstNull(stackObjectType)
 		numSlots := (targetData.TypeAllocSize(stackObjectType) - uint64(targetData.PointerSize())*2) / uint64(targetData.ABITypeAlignment(uintptrType))
@@ -308,7 +316,10 @@ func MakeGCStackSlots(mod llvm.Module) bool {
 		pointerStores := make(map[llvm.Value]struct{})
 		for i, ptr := range pointers {
 			// Insert the store after the pointer value is created.
-			insertionPoint := llvm.NextInstruction(ptr)
+			insertionPoint := entryFirst
+			if ptr.IsAArgument().IsNil() {
+				insertionPoint = llvm.NextInstruction(ptr)
+			}
 			for !insertionPoint.IsAPHINode().IsNil() {
 				// PHI nodes are required to be at the start of the block.
 				// Insert after the last PHI node.

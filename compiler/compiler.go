@@ -1400,6 +1400,20 @@ func (b *builder) createFunctionStart(intrinsic bool) {
 		// It is necessary to pass a dummy alloca to runtime.trackPointer
 		// because runtime.trackPointer is replaced by an alloca store.
 		b.stackChainAlloca = b.CreateAlloca(b.ctx.Int8Type(), "stackalloc")
+
+		// Parameters and closure variables are live from function entry. On
+		// targets that need stack objects they are not scanned anywhere else,
+		// so spill them like any other tracked value.
+		for _, param := range b.fn.Params {
+			if value, ok := b.locals[param]; ok && len(*param.Referrers()) != 0 {
+				b.trackValue(value)
+			}
+		}
+		for _, freeVar := range b.fn.FreeVars {
+			if value, ok := b.locals[freeVar]; ok && len(*freeVar.Referrers()) != 0 {
+				b.trackValue(value)
+			}
+		}
 	}
 }
 
